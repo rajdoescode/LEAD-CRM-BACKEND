@@ -1,0 +1,16 @@
+{
+  "general": {
+    "companyName": "LeadCRM Enterprise",
+    "timezone": "UTC",
+    "currency": "USD"
+  },
+  "notifications": {
+    "email": true,
+    "push": true,
+    "slack": false
+  },
+  "security": {
+    "require2FA": false,
+    "sessionTimeout": 60
+  }
+}
