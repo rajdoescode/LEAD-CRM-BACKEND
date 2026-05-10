@@ -1,120 +1,61 @@
-import { readJSON, writeJSON } from '../utils/fileHelper.js';
+import Deal from '../models/Deal.js';
 import ApiResponse from '../utils/ApiResponse.js';
 import ApiError from '../utils/ApiError.js';
+import { logActivity } from '../services/activityService.js';
 
-const PIPELINE_FILE = 'pipeline.json';
+const PIPELINE_STAGES = [
+  { id: 'new', name: 'New', color: '#3B82F6', order: 1 },
+  { id: 'qualified', name: 'Qualified', color: '#8B5CF6', order: 2 },
+  { id: 'proposal', name: 'Proposal', color: '#F59E0B', order: 3 },
+  { id: 'negotiation', name: 'Negotiation', color: '#EC4899', order: 4 },
+  { id: 'closed-won', name: 'Closed Won', color: '#10B981', order: 5 },
+  { id: 'closed-lost', name: 'Closed Lost', color: '#EF4444', order: 6 },
+];
 
-/**
- * GET /api/pipeline
- * Fetch the full pipeline (stages + deals).
- */
-const getAll = (_req, res) => {
-  const pipeline = readJSON(PIPELINE_FILE);
-  ApiResponse.success(res, pipeline, 'Pipeline fetched successfully');
+const getAll = async (_req, res) => {
+  const deals = await Deal.find()
+    .populate('lead', 'name email phone')
+    .populate('assignedTo', 'name email avatar')
+    .sort({ createdAt: -1 }).lean();
+  const transformed = deals.map((d) => { d.id = d._id; delete d._id; delete d.__v; return d; });
+  ApiResponse.success(res, { stages: PIPELINE_STAGES, deals: transformed }, 'Pipeline fetched');
 };
 
-/**
- * GET /api/pipeline/stages
- * Fetch pipeline stages only.
- */
-const getStages = (_req, res) => {
-  const { stages } = readJSON(PIPELINE_FILE);
-  ApiResponse.success(res, stages, 'Pipeline stages fetched successfully');
+const getStages = (_req, res) => { ApiResponse.success(res, PIPELINE_STAGES, 'Stages fetched'); };
+
+const getDeals = async (_req, res) => {
+  const deals = await Deal.find().populate('lead', 'name email phone').populate('assignedTo', 'name email avatar').sort({ createdAt: -1 });
+  ApiResponse.success(res, deals, 'Deals fetched');
 };
 
-/**
- * GET /api/pipeline/deals
- * Fetch all deals.
- */
-const getDeals = (_req, res) => {
-  const { deals } = readJSON(PIPELINE_FILE);
-  ApiResponse.success(res, deals, 'Deals fetched successfully');
-};
-
-/**
- * PUT /api/pipeline/deals/:id/stage
- * Move a deal to a different pipeline stage.
- */
-const updateDealStage = (req, res) => {
+const updateDealStage = async (req, res) => {
   const { stage } = req.body;
-
-  if (!stage) {
-    throw ApiError.badRequest('Stage is required', [
-      { field: 'stage', message: 'Stage is required' },
-    ]);
-  }
-
-  const pipeline = readJSON(PIPELINE_FILE);
-  const deal = pipeline.deals.find((d) => d.id === req.params.id);
-
-  if (!deal) {
-    throw ApiError.notFound('Deal not found');
-  }
-
-  deal.stage = stage;
-  deal.updatedAt = new Date().toISOString();
-  writeJSON(PIPELINE_FILE, pipeline);
-
-  ApiResponse.success(res, deal, 'Deal stage updated successfully');
+  if (!stage) throw ApiError.badRequest('Stage is required');
+  const extras = (stage === 'closed-won' || stage === 'closed-lost') ? { closedAt: new Date() } : {};
+  const deal = await Deal.findByIdAndUpdate(req.params.id, { stage, ...extras }, { new: true, runValidators: true })
+    .populate('lead', 'name email phone').populate('assignedTo', 'name email avatar');
+  if (!deal) throw ApiError.notFound('Deal not found');
+  await logActivity({ type: 'deal_stage_changed', description: `Deal "${deal.title}" → ${stage}`, lead: deal.lead?._id, user: req.user?._id });
+  ApiResponse.success(res, deal, 'Deal stage updated');
 };
 
-/**
- * POST /api/pipeline/deals
- * Create a new deal.
- */
-const createDeal = (req, res) => {
-  const { title, value, stage } = req.body;
-
-  if (!title) {
-    throw ApiError.badRequest('Deal title is required', [
-      { field: 'title', message: 'Title is required' },
-    ]);
-  }
-
-  const pipeline = readJSON(PIPELINE_FILE);
-  const newDeal = {
-    id: `deal_${Date.now()}`,
-    title,
-    value: value || 0,
-    stage: stage || pipeline.stages?.[0]?.id || 'new',
-    ...req.body,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
-
-  pipeline.deals.push(newDeal);
-  writeJSON(PIPELINE_FILE, pipeline);
-
-  ApiResponse.created(res, 'Deal created successfully');
+const createDeal = async (req, res) => {
+  const deal = await Deal.create({ ...req.body, stage: req.body.stage || 'new', assignedTo: req.body.assignedTo || req.user?._id });
+  await logActivity({ type: 'deal_created', description: `Deal "${deal.title}" created`, lead: deal.lead, user: req.user?._id });
+  ApiResponse.created(res, deal, 'Deal created');
 };
 
-/**
- * PUT /api/pipeline/deals/:id
- * Update a deal's details.
- */
-const updateDeal = (req, res) => {
-  const pipeline = readJSON(PIPELINE_FILE);
-  const idx = pipeline.deals.findIndex((d) => d.id === req.params.id);
-
-  if (idx === -1) {
-    throw ApiError.notFound('Deal not found');
-  }
-
-  pipeline.deals[idx] = {
-    ...pipeline.deals[idx],
-    ...req.body,
-    updatedAt: new Date().toISOString(),
-  };
-  writeJSON(PIPELINE_FILE, pipeline);
-
-  ApiResponse.success(res, pipeline.deals[idx], 'Deal updated successfully');
+const updateDeal = async (req, res) => {
+  const deal = await Deal.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true })
+    .populate('lead', 'name email phone').populate('assignedTo', 'name email avatar');
+  if (!deal) throw ApiError.notFound('Deal not found');
+  ApiResponse.success(res, deal, 'Deal updated');
 };
 
-export {
-  getAll,
-  getStages,
-  getDeals,
-  updateDealStage,
-  createDeal,
-  updateDeal,
+const deleteDeal = async (req, res) => {
+  const deal = await Deal.findByIdAndDelete(req.params.id);
+  if (!deal) throw ApiError.notFound('Deal not found');
+  ApiResponse.noContent(res, 'Deal deleted');
 };
+
+export { getAll, getStages, getDeals, updateDealStage, createDeal, updateDeal, deleteDeal };

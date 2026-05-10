@@ -19,13 +19,12 @@ const validate = (req, _res, next) => {
 // ─── Lead Validators ─────────────────────────────────────────────
 const validateCreateLead = [
   body('name').notEmpty().withMessage('Name is required').trim(),
-  body('email').notEmpty().withMessage('Email is required').isEmail().withMessage('Invalid email'),
-  body('phone').optional().trim(),
-  body('company').optional().trim(),
+  body('email').optional().isEmail().withMessage('Invalid email'),
+  body('phone').notEmpty().withMessage('Phone number is required').trim()
+    .matches(/^(\+91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}$/).withMessage('Enter a valid Indian phone number'),
   body('source').optional().isIn(['Website', 'Referral', 'LinkedIn', 'Cold Email', 'Conference', 'Trade Show', 'Partner', 'Other']),
   body('status').optional().isIn(['new', 'contacted', 'interested', 'qualified', 'proposal', 'negotiation', 'follow-up', 'won', 'lost']),
   body('score').optional().isInt({ min: 0, max: 100 }),
-  body('value').optional().isFloat({ min: 0 }),
   validate,
 ];
 
@@ -33,8 +32,9 @@ const validateUpdateLead = [
   param('id').isMongoId().withMessage('Invalid lead ID'),
   body('name').optional().trim().notEmpty(),
   body('email').optional().isEmail().withMessage('Invalid email'),
+  body('phone').optional().trim()
+    .matches(/^(\+91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}$/).withMessage('Enter a valid Indian phone number'),
   body('score').optional().isInt({ min: 0, max: 100 }),
-  body('value').optional().isFloat({ min: 0 }),
   validate,
 ];
 
@@ -81,6 +81,17 @@ const validateCreateDeal = [
   validate,
 ];
 
+// ─── Client Validators ──────────────────────────────────────────
+const validateCreateClient = [
+  body('name').notEmpty().withMessage('Client name is required').trim(),
+  body('email').optional().isEmail().withMessage('Invalid email'),
+  body('phone').optional().trim(),
+  body('company').optional().trim(),
+  body('status').optional().isIn(['active', 'inactive', 'churned']),
+  body('category').optional().isIn(['individual', 'business', 'enterprise', 'government']),
+  validate,
+];
+
 // ─── Auth Validators ────────────────────────────────────────────
 const validateVerifyPin = [
   body('pin').notEmpty().withMessage('PIN is required'),
@@ -107,6 +118,7 @@ export {
   validateCreateNote,
   validateCreateFollowUp,
   validateCreateDeal,
+  validateCreateClient,
   validateVerifyPin,
   validateMongoId,
   validateLeadId,

@@ -4,6 +4,8 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
+import rateLimit from './middleware/rateLimit.js';
+import sanitize from './middleware/sanitize.js';
 import ApiResponse from './utils/ApiResponse.js';
 import apiRoutes from './routes/index.js';
 
@@ -21,9 +23,15 @@ app.use(
   })
 );
 
+// ─── Rate Limiting ────────────────────────────────────────────
+app.use(rateLimit({ windowMs: 60_000, max: 200 }));
+
 // ─── Request Parsing ──────────────────────────────────────────
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+// ─── Request Sanitization ─────────────────────────────────────
+app.use(sanitize);
 
 // ─── HTTP Logging ─────────────────────────────────────────────
 if (process.env.NODE_ENV !== 'test') {

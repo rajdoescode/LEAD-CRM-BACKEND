@@ -21,7 +21,8 @@ const userSchema = new mongoose.Schema(
       type: String,
       required: [true, 'PIN is required'],
       minlength: [4, 'PIN must be 4 digits'],
-      maxlength: [6, 'PIN cannot exceed 6 digits'],
+      maxlength: [100, 'PIN hash can be up to 100 chars'],
+      select: false,
     },
     role: {
       type: String,
@@ -64,7 +65,7 @@ const userSchema = new mongoose.Schema(
 );
 
 // ─── Indexes ─────────────────────────────────────────────────────
-userSchema.index({ email: 1 }, { unique: true });
+// email unique constraint is already handled by the schema definition above
 userSchema.index({ role: 1 });
 userSchema.index({ isActive: 1 });
 
@@ -74,11 +75,10 @@ userSchema.methods.comparePin = async function (candidatePin) {
 };
 
 // ─── Pre-save hook: hash PIN ─────────────────────────────────────
-userSchema.pre('save', async function (next) {
-  if (!this.isModified('pin')) return next();
+userSchema.pre('save', async function () {
+  if (!this.isModified('pin')) return;
   const salt = await bcrypt.genSalt(10);
   this.pin = await bcrypt.hash(this.pin, salt);
-  next();
 });
 
 const User = mongoose.model('User', userSchema);

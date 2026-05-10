@@ -1,97 +1,102 @@
-import { readJSON, writeJSON } from '../utils/fileHelper.js';
+import CallLog from '../models/CallLog.js';
+import Lead from '../models/Lead.js';
 import ApiResponse from '../utils/ApiResponse.js';
 import ApiError from '../utils/ApiError.js';
-
-const CALL_LOGS_FILE = 'callLogs.json';
+import { logActivity } from '../services/activityService.js';
 
 /**
  * GET /api/leads/:leadId/calls
  * Fetch all call logs for a specific lead.
  */
-const getByLeadId = (req, res) => {
+const getByLeadId = async (req, res) => {
   const { leadId } = req.params;
-  const logs = readJSON(CALL_LOGS_FILE)
-    .filter((c) => c.leadId === leadId)
-    .sort((a, b) => new Date(b.callDate) - new Date(a.callDate));
 
-  ApiResponse.success(res, logs, 'Call logs fetched successfully');
+  const logs = await CallLog.find({ lead: leadId })
+    .populate('agent', 'name email avatar')
+    .sort({ callDate: -1 })
+    .lean();
+
+  // Transform _id to id
+  const transformed = logs.map((l) => {
+    l.id = l._id;
+    l.leadId = l.lead;
+    delete l._id;
+    delete l.__v;
+    return l;
+  });
+
+  ApiResponse.success(res, transformed, 'Call logs fetched successfully');
 };
 
 /**
  * POST /api/leads/:leadId/calls
  * Create a new call log entry for a lead.
  */
-const create = (req, res) => {
+const create = async (req, res) => {
   const { leadId } = req.params;
-  const { remarks, callType, status, outcome } = req.body;
 
-  if (!remarks?.trim()) {
-    throw ApiError.badRequest('Call remarks are required', [
-      { field: 'remarks', message: 'Remarks cannot be empty' },
-    ]);
+  // Verify lead exists
+  const lead = await Lead.findById(leadId);
+  if (!lead) {
+    throw ApiError.notFound('Lead not found');
   }
 
-  const logs = readJSON(CALL_LOGS_FILE);
+  const callLog = await CallLog.create({
+    ...req.body,
+    lead: leadId,
+    agent: req.body.agentId || req.user?._id,
+  });
 
-  const newLog = {
-    id: `call_${Date.now()}`,
-    leadId,
-    callDate: req.body.callDate || new Date().toISOString(),
-    duration: req.body.duration || 0,
-    callType: callType || 'outbound',
-    status: status || 'completed',
-    outcome: outcome || 'interested',
-    remarks: remarks.trim(),
-    followUpDate: req.body.followUpDate || null,
-    followUpNotes: req.body.followUpNotes || '',
-    agentName: req.body.agentName || 'Current User',
-    agentId: req.body.agentId || 'user_1',
-    policyType: req.body.policyType || '',
-    policyNumber: req.body.policyNumber || '',
-    premium: req.body.premium || 0,
-    createdAt: new Date().toISOString(),
-  };
+  // Update lead's last contacted date
+  lead.lastContactedAt = new Date();
+  if (req.body.followUpDate) {
+    lead.nextFollowUpAt = new Date(req.body.followUpDate);
+  }
+  await lead.save({ validateBeforeSave: false });
 
-  logs.push(newLog);
-  writeJSON(CALL_LOGS_FILE, logs);
+  await logActivity({
+    type: 'call_logged',
+    description: `Call logged for "${lead.name}" - ${callLog.outcome}`,
+    lead: leadId,
+    user: req.user?._id,
+    metadata: { callType: callLog.callType, outcome: callLog.outcome, duration: callLog.duration },
+  });
 
-  ApiResponse.created(res, newLog, 'Call log created successfully');
+  ApiResponse.created(res, callLog, 'Call log created successfully');
 };
 
 /**
  * PUT /api/leads/:leadId/calls/:callId
  * Update an existing call log entry.
  */
-const update = (req, res) => {
+const update = async (req, res) => {
   const { callId } = req.params;
-  const logs = readJSON(CALL_LOGS_FILE);
-  const idx = logs.findIndex((c) => c.id === callId);
 
-  if (idx === -1) {
+  const callLog = await CallLog.findByIdAndUpdate(
+    callId,
+    { ...req.body },
+    { new: true, runValidators: true }
+  ).populate('agent', 'name email avatar');
+
+  if (!callLog) {
     throw ApiError.notFound('Call log not found');
   }
 
-  logs[idx] = { ...logs[idx], ...req.body, updatedAt: new Date().toISOString() };
-  writeJSON(CALL_LOGS_FILE, logs);
-
-  ApiResponse.success(res, logs[idx], 'Call log updated successfully');
+  ApiResponse.success(res, callLog, 'Call log updated successfully');
 };
 
 /**
  * DELETE /api/leads/:leadId/calls/:callId
  * Delete a call log entry.
  */
-const remove = (req, res) => {
+const remove = async (req, res) => {
   const { callId } = req.params;
-  const logs = readJSON(CALL_LOGS_FILE);
-  const idx = logs.findIndex((c) => c.id === callId);
 
-  if (idx === -1) {
+  const callLog = await CallLog.findByIdAndDelete(callId);
+
+  if (!callLog) {
     throw ApiError.notFound('Call log not found');
   }
-
-  logs.splice(idx, 1);
-  writeJSON(CALL_LOGS_FILE, logs);
 
   ApiResponse.noContent(res, 'Call log deleted successfully');
 };

@@ -10,26 +10,16 @@ const leadSchema = new mongoose.Schema(
     },
     email: {
       type: String,
-      required: [true, 'Email is required'],
       trim: true,
       lowercase: true,
-      match: [/^\S+@\S+\.\S+$/, 'Please provide a valid email'],
+      default: '',
     },
     phone: {
       type: String,
+      required: [true, 'Phone number is required'],
       trim: true,
-      default: '',
     },
-    company: {
-      type: String,
-      trim: true,
-      default: '',
-    },
-    designation: {
-      type: String,
-      trim: true,
-      default: '',
-    },
+
     source: {
       type: String,
       enum: ['Website', 'Referral', 'LinkedIn', 'Cold Email', 'Conference', 'Trade Show', 'Partner', 'Other'],
@@ -46,11 +36,7 @@ const leadSchema = new mongoose.Schema(
       max: 100,
       default: 0,
     },
-    value: {
-      type: Number,
-      min: 0,
-      default: 0,
-    },
+
     tags: [{
       type: String,
       trim: true,
@@ -99,9 +85,8 @@ leadSchema.index({ status: 1 });
 leadSchema.index({ source: 1 });
 leadSchema.index({ assignedTo: 1 });
 leadSchema.index({ score: -1 });
-leadSchema.index({ value: -1 });
 leadSchema.index({ createdAt: -1 });
-leadSchema.index({ name: 'text', email: 'text', company: 'text' });
+leadSchema.index({ name: 'text', email: 'text' });
 
 const Lead = mongoose.model('Lead', leadSchema);
 export default Lead;

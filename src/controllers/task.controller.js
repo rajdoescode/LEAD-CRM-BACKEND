@@ -1,92 +1,123 @@
-import { readJSON, writeJSON } from '../utils/fileHelper.js';
+import Task from '../models/Task.js';
 import ApiResponse from '../utils/ApiResponse.js';
 import ApiError from '../utils/ApiError.js';
-import paginate from '../utils/paginate.js';
-
-const TASKS_FILE = 'tasks.json';
+import { logActivity } from '../services/activityService.js';
 
 /**
  * GET /api/tasks
  * Fetch tasks with optional filters and pagination.
  */
-const getAll = (req, res) => {
-  const { status, assignee, priority } = req.query;
-  let tasks = readJSON(TASKS_FILE);
+const getAll = async (req, res) => {
+  const { status, assignee, priority, page = 1, limit = 25 } = req.query;
 
-  // ─── Filters ────────────────────────────────────────────────
-  if (status) tasks = tasks.filter((t) => t.status === status);
-  if (assignee) tasks = tasks.filter((t) => t.assignee === assignee);
-  if (priority) tasks = tasks.filter((t) => t.priority === priority);
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const limitNum = Math.min(Math.max(1, parseInt(limit, 10) || 25), 100);
 
-  // ─── Sort by due date ───────────────────────────────────────
-  tasks.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+  const filter = {};
+  if (status) filter.status = status;
+  if (assignee) filter.assignee = assignee;
+  if (priority) filter.priority = priority;
 
-  // ─── Paginate ───────────────────────────────────────────────
-  const { items, pagination } = paginate(tasks, req.query);
+  const [tasks, total] = await Promise.all([
+    Task.find(filter)
+      .populate('assignee', 'name email avatar')
+      .populate('lead', 'name email phone')
+      .sort({ dueDate: 1 })
+      .skip((pageNum - 1) * limitNum)
+      .limit(limitNum)
+      .lean(),
+    Task.countDocuments(filter),
+  ]);
 
-  ApiResponse.paginated(res, items, pagination, 'Tasks fetched successfully');
+  const totalPages = Math.ceil(total / limitNum);
+
+  // Transform _id to id
+  const transformed = tasks.map((t) => {
+    t.id = t._id;
+    delete t._id;
+    delete t.__v;
+    return t;
+  });
+
+  ApiResponse.paginated(
+    res,
+    transformed,
+    {
+      page: pageNum,
+      limit: limitNum,
+      total,
+      totalPages,
+      hasNextPage: pageNum < totalPages,
+      hasPrevPage: pageNum > 1,
+    },
+    'Tasks fetched successfully'
+  );
 };
 
 /**
  * POST /api/tasks
  * Create a new task.
  */
-const create = (req, res) => {
-  const { title } = req.body;
-
-  if (!title) {
-    throw ApiError.badRequest('Task title is required', [
-      { field: 'title', message: 'Title is required' },
-    ]);
-  }
-
-  const tasks = readJSON(TASKS_FILE);
-  const newTask = {
-    id: `task_${Date.now()}`,
+const create = async (req, res) => {
+  const task = await Task.create({
     ...req.body,
-    status: req.body.status || 'pending',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
+    assignee: req.body.assignee || req.user?._id,
+  });
 
-  tasks.push(newTask);
-  writeJSON(TASKS_FILE, tasks);
+  await logActivity({
+    type: 'task_created',
+    description: `Task "${task.title}" created`,
+    lead: task.lead,
+    user: req.user?._id,
+  });
 
-  ApiResponse.created(res, 'Task created successfully');
+  ApiResponse.created(res, task, 'Task created successfully');
 };
 
 /**
  * PUT /api/tasks/:id
  * Update an existing task.
  */
-const update = (req, res) => {
-  const tasks = readJSON(TASKS_FILE);
-  const idx = tasks.findIndex((t) => t.id === req.params.id);
+const update = async (req, res) => {
+  // If completing the task, set completedAt
+  if (req.body.status === 'completed' && !req.body.completedAt) {
+    req.body.completedAt = new Date();
+  }
 
-  if (idx === -1) {
+  const task = await Task.findByIdAndUpdate(
+    req.params.id,
+    { ...req.body },
+    { new: true, runValidators: true }
+  )
+    .populate('assignee', 'name email avatar')
+    .populate('lead', 'name email phone');
+
+  if (!task) {
     throw ApiError.notFound('Task not found');
   }
 
-  tasks[idx] = { ...tasks[idx], ...req.body, updatedAt: new Date().toISOString() };
-  writeJSON(TASKS_FILE, tasks);
+  if (req.body.status === 'completed') {
+    await logActivity({
+      type: 'task_completed',
+      description: `Task "${task.title}" completed`,
+      lead: task.lead?._id,
+      user: req.user?._id,
+    });
+  }
 
-  ApiResponse.success(res, tasks[idx], 'Task updated successfully');
+  ApiResponse.success(res, task, 'Task updated successfully');
 };
 
 /**
  * DELETE /api/tasks/:id
  * Delete a task.
  */
-const remove = (req, res) => {
-  const tasks = readJSON(TASKS_FILE);
-  const idx = tasks.findIndex((t) => t.id === req.params.id);
+const remove = async (req, res) => {
+  const task = await Task.findByIdAndDelete(req.params.id);
 
-  if (idx === -1) {
+  if (!task) {
     throw ApiError.notFound('Task not found');
   }
-
-  tasks.splice(idx, 1);
-  writeJSON(TASKS_FILE, tasks);
 
   ApiResponse.noContent(res, 'Task deleted successfully');
 };
@@ -95,5 +126,5 @@ export {
   getAll,
   create,
   update,
-  remove
+  remove,
 };

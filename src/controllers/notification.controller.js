@@ -1,62 +1,35 @@
-import { readJSON, writeJSON } from '../utils/fileHelper.js';
+import Notification from '../models/Notification.js';
 import ApiResponse from '../utils/ApiResponse.js';
 import ApiError from '../utils/ApiError.js';
-import paginate from '../utils/paginate.js';
 
-const NOTIF_FILE = 'notifications.json';
+const getAll = async (req, res) => {
+  const { page = 1, limit = 25 } = req.query;
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const limitNum = Math.min(Math.max(1, parseInt(limit, 10) || 25), 100);
 
-/**
- * GET /api/notifications
- * Fetch all notifications, sorted newest-first, with pagination.
- */
-const getAll = (req, res) => {
-  const notifs = readJSON(NOTIF_FILE).sort(
-    (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
-  );
+  const filter = req.user ? { user: req.user._id } : {};
 
-  const { items, pagination } = paginate(notifs, req.query);
-  ApiResponse.paginated(res, items, pagination, 'Notifications fetched successfully');
+  const [notifs, total] = await Promise.all([
+    Notification.find(filter).sort({ createdAt: -1 }).skip((pageNum - 1) * limitNum).limit(limitNum).lean(),
+    Notification.countDocuments(filter),
+  ]);
+
+  const transformed = notifs.map((n) => { n.id = n._id; delete n._id; delete n.__v; return n; });
+  const totalPages = Math.ceil(total / limitNum);
+
+  ApiResponse.paginated(res, transformed, { page: pageNum, limit: limitNum, total, totalPages, hasNextPage: pageNum < totalPages, hasPrevPage: pageNum > 1 }, 'Notifications fetched');
 };
 
-/**
- * PUT /api/notifications/:id/read
- * Mark a single notification as read.
- */
-const markRead = (req, res) => {
-  const notifs = readJSON(NOTIF_FILE);
-  const notif = notifs.find((n) => n.id === req.params.id);
-
-  if (!notif) {
-    throw ApiError.notFound('Notification not found');
-  }
-
-  notif.read = true;
-  notif.readAt = new Date().toISOString();
-  writeJSON(NOTIF_FILE, notifs);
-
+const markRead = async (req, res) => {
+  const notif = await Notification.findByIdAndUpdate(req.params.id, { read: true, readAt: new Date() }, { new: true });
+  if (!notif) throw ApiError.notFound('Notification not found');
   ApiResponse.success(res, notif, 'Notification marked as read');
 };
 
-/**
- * PUT /api/notifications/mark-all-read
- * Mark all notifications as read.
- */
-const markAllRead = (_req, res) => {
-  const notifs = readJSON(NOTIF_FILE);
-  const now = new Date().toISOString();
-
-  notifs.forEach((n) => {
-    n.read = true;
-    n.readAt = now;
-  });
-
-  writeJSON(NOTIF_FILE, notifs);
-
-  ApiResponse.success(res, { updatedCount: notifs.length }, 'All notifications marked as read');
+const markAllRead = async (req, res) => {
+  const filter = req.user ? { user: req.user._id, read: false } : { read: false };
+  const result = await Notification.updateMany(filter, { read: true, readAt: new Date() });
+  ApiResponse.success(res, { updatedCount: result.modifiedCount }, 'All notifications marked as read');
 };
 
-export {
-  getAll,
-  markRead,
-  markAllRead
-};
+export { getAll, markRead, markAllRead };

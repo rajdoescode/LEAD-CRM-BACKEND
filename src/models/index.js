@@ -1,5 +1,6 @@
 export { default as User } from './User.js';
 export { default as Lead } from './Lead.js';
+export { default as Client } from './Client.js';
 export { default as CallLog } from './CallLog.js';
 export { default as Note } from './Note.js';
 export { default as FollowUp } from './FollowUp.js';
@@ -7,3 +8,4 @@ export { default as Task } from './Task.js';
 export { default as Activity } from './Activity.js';
 export { default as Deal } from './Deal.js';
 export { default as Notification } from './Notification.js';
+export { default as StatusHistory } from './StatusHistory.js';
