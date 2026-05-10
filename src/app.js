@@ -39,6 +39,10 @@ if (process.env.NODE_ENV !== 'test') {
 }
 
 // ─── Health Check ─────────────────────────────────────────────
+app.get('/', (_req, res) => {
+  res.status(200).json({ status: 'ok', message: 'LEAD CRM API is running' });
+});
+
 app.get('/health', (_req, res) => {
   ApiResponse.success(
     res,
